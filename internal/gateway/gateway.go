@@ -6643,8 +6643,9 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 	}
 	// a Chat stream of Gemini's OpenAI-compatible API is whole only with
 	// its finish_reason, [DONE] or not (saysItsEnd)
-	unfinished := proto == provider.Chat && sniff.failed == "" && sniff.u.Stop == "" && saysItsEnd(p, proto, upstream)
-	if fin := sniff.tail.finish(); sse && unfinished && fin != "" && (rerr == nil || rerr == io.EOF) && r.Context().Err() == nil {
+	unfinished := proto == provider.Chat && sniff.failed == "" && sniff.u.Stop == "" && saysItsEnd(p, proto, upstream) &&
+		!loomyCallIsWhole(p, proto, sniff.tail.calls)
+	if fin := sniff.tail.finish(); sse && unfinished && fin != "" && p.Host() != loomyHost && (rerr == nil || rerr == io.EOF) && r.Context().Err() == nil {
 		// only the finish_reason was lost, after the generation was done
 		// (chatTail): the client gets it, and the reply is whole. The
 		// event the upstream began and never ended has no rest coming:
@@ -7961,7 +7962,7 @@ func (s *Server) translate(w http.ResponseWriter, r *http.Request, p provider.Pr
 		ended = ended || replyEnds(actual, data, upstreamStop([]byte(data)))
 		return dec(data, see)
 	})
-	if fin := tail.finish(); err == nil && !ended && actual == provider.Chat && fin != "" && saysItsEnd(p, actual, model) {
+	if fin := tail.finish(); err == nil && !ended && actual == provider.Chat && fin != "" && saysItsEnd(p, actual, model) && p.Host() != loomyHost {
 		// Gemini's OpenAI-compatible API lost only the finish_reason
 		// after its generation was done (chatTail)
 		ended, err = true, dec(string(finishChunk(fin)), see)
@@ -8006,7 +8007,8 @@ func (s *Server) translate(w http.ResponseWriter, r *http.Request, p provider.Pr
 		// with: a minute limit in a 200 stream is a 429, not a 502
 		return writeVendorError(w, from, cmp.Or(col.errStatus, streamStatus(said)), p.Name+": "+said, col.errSaid), said
 	}
-	if col.err == "" && !ended && saysItsEnd(p, actual, model) && r.Context().Err() == nil {
+	if col.err == "" && !ended && saysItsEnd(p, actual, model) && !loomyCallIsWhole(p, actual, madeCalls(col.res.Parts)) &&
+		r.Context().Err() == nil {
 		// an Anthropic stream that just stopped — no stop_reason, no
 		// message_stop — or a Responses one with no response.completed is
 		// a reply cut short, not a finished one, as a streaming client is
