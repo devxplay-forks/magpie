@@ -133,6 +133,13 @@ func geminiKin(actual provider.Protocol) bool {
 // without finish_reason" (esp32gallery on #2471).
 const commandCodeHost = "api.commandcode.ai"
 
+// loomyHost is iFlytek's Loomy, whose gateway ends a generation it did not
+// finish with a bare [DONE] and no finish_reason: a whole reply of its does
+// carry one, so a stream of its with none is a reply cut short. It is a
+// plugin's provider, so Host is the plugin's own id — plugin://<id>/v1 cut
+// down by HostOf — and not the vendor's hostname.
+const loomyHost = "loomy"
+
 // saysItsEnd tells whether every whole reply of p in proto, serving model,
 // says it ended, so a stream that stops short of that is a reply cut
 // short: Anthropic's message_stop, Responses' response.completed, a
@@ -146,15 +153,40 @@ const commandCodeHost = "api.commandcode.ai"
 // sends only once its generation is done, only the finish_reason was lost
 // and it is filled in (chatTail); without it the cut is said as one.
 // Command Code's is the same kind, its killed workers leaving the turn
-// with no closing chunk at all (esp32gallery on #2471). Other Chat APIs
-// may end a whole reply with neither a finish_reason nor [DONE], so only
-// a failed read is a cut there.
+// with no closing chunk at all (esp32gallery on #2471). Loomy's gateway
+// ends a generation it did not finish with a bare [DONE] and no
+// finish_reason, and a whole reply of its does carry one, so a stream of
+// its with none is that same cut (loomyHost) — unless the reply made
+// calls, whose frames have no measured run (loomyCallIsWhole), and no
+// reason is filled in for it. Other Chat APIs may end a whole reply with
+// neither a finish_reason nor [DONE], so only a failed read is a cut there.
 func saysItsEnd(p provider.Provider, proto provider.Protocol, model string) bool {
 	switch {
 	case proto == provider.Anthropic, proto == provider.Responses, geminiKin(proto):
 		return true
 	case proto == provider.Chat:
-		return geminiCompat(p.Host(), model) || p.Host() == commandCodeHost
+		return geminiCompat(p.Host(), model) || p.Host() == commandCodeHost || p.Host() == loomyHost
+	}
+	return false
+}
+
+// loomyCallIsWhole is whether a Loomy reply that ended with no finish_reason
+// made calls, and so is no cut: its tool-call frames have no recorded run
+// against a real account, and a call read as a cut would fail a working turn.
+// Nothing else is exempt, and no reason is filled in for it — a truncated
+// reply that already counted its usage would be blessed whole by chatTail's
+// "stop", which is the cut this reads for.
+func loomyCallIsWhole(p provider.Provider, proto provider.Protocol, calls bool) bool {
+	return proto == provider.Chat && p.Host() == loomyHost && calls
+}
+
+// madeCalls is whether a reply assembled so far made a tool call, for the
+// path that hands a whole reply on where no chatTail followed its stream.
+func madeCalls(parts []Part) bool {
+	for _, pt := range parts {
+		if pt.Kind == ToolCall {
+			return true
+		}
 	}
 	return false
 }
@@ -606,7 +638,8 @@ func (s *Server) streamTranslated(w http.ResponseWriter, r *http.Request, p prov
 					serr = nil
 				}
 				if serr == nil && failed == "" && !ended && !relooped &&
-					saysItsEnd(p, actual, model) && r.Context().Err() == nil {
+					saysItsEnd(p, actual, model) && !loomyCallIsWhole(p, actual, tail.calls) &&
+					r.Context().Err() == nil {
 					// an Anthropic stream that just stopped — no
 					// stop_reason, no message_stop — or a Responses one
 					// with no response.completed is a reply cut short,
@@ -616,7 +649,7 @@ func (s *Server) streamTranslated(w http.ResponseWriter, r *http.Request, p prov
 					// whole would say completed it never said. A Gemini
 					// one is told by its finishReason (geminiEnds, #1643)
 					serr = errEndedShort
-					if fin := tail.finish(); actual == provider.Chat && fin != "" {
+					if fin := tail.finish(); actual == provider.Chat && p.Host() != loomyHost && fin != "" {
 						// Gemini's OpenAI-compatible API lost only the
 						// finish_reason after its generation was done
 						u.add(Usage{Stop: fin})
