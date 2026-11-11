@@ -20,6 +20,25 @@ if not "%USE_PROXY%"=="1" (
     echo ==^> Using environment proxy settings
 )
 
+:: Build this checkout once and run that build: `go run` builds into a
+:: temporary folder that is deleted, so nothing can point at it.
+if "%LOCALAPPDATA%"=="" set "LOCALAPPDATA=%USERPROFILE%\AppData\Local"
+set "BUILD_DIR=%LOCALAPPDATA%\magpie-dev"
+if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
+set "MAGPIE=%BUILD_DIR%\magpie.exe"
+echo ==^> Building magpie ^(nogui^) from %~dp0...
+pushd "%~dp0"
+go build -tags nogui -o "%MAGPIE%.new" .
+if errorlevel 1 (
+    popd
+    del /q "%MAGPIE%.new" 2>nul
+    echo go build failed: nothing was replaced, %MAGPIE% is the last build that worked
+    exit /b 1
+)
+popd
+move /y "%MAGPIE%.new" "%MAGPIE%" >nul
+set "PATH=%BUILD_DIR%;%PATH%"
+
 if "%MAGPIE_WEB_KEY%"=="" (
     set MAGPIE_WEB_KEY=magpie-web-admin-secret-key-1234
 )
@@ -27,7 +46,7 @@ if "%MAGPIE_WEB_KEY%"=="" (
 set MAGPIE_ADDR=0.0.0.0:%GATEWAY_PORT%
 
 echo ==^> Checking Gateway API keys...
-go run -tags nogui . gateway-key list
+"%MAGPIE%" gateway-key list
 
 echo.
 echo ==========================================================
@@ -39,4 +58,4 @@ echo Proxy Mode:  Direct ^(bypassed^)
 echo ==========================================================
 echo.
 
-go run -tags nogui . web --addr 0.0.0.0:%PORT% --no-open
+"%MAGPIE%" web --addr 0.0.0.0:%PORT% --no-open
