@@ -14,9 +14,10 @@
 # Options:
 #   --port <n>          the page's port (3430, as `magpie web`)
 #   --gateway-port <n>  the gateway's port (3425)
-#   --addr <host:port>  where the page listens (127.0.0.1:<port>)
+#   --addr <host:port>  where the page listens (0.0.0.0:<port>)
 #   --lan               serve the page and the gateway on the network
-#                       (0.0.0.0): anyone with the link can change magpie
+#                       (0.0.0.0, default)
+#   --local             serve on loopback only (127.0.0.1)
 #   --web-key <key>     the page's key, kept across runs, as MAGPIE_WEB_KEY
 #                       does; without one, each run makes its own and prints
 #                       the link that carries it
@@ -35,7 +36,7 @@ cd "$(dirname "$0")" || exit 1
 port=3430
 gateway_port=3425
 addr=''
-lan=0
+lan=1
 web_key=''
 use_proxy=0
 link=1
@@ -57,6 +58,7 @@ while [ $# -gt 0 ]; do
 	--addr) [ $# -ge 2 ] || die "--addr needs host:port"; addr=$2; shift 2 ;;
 	--addr=*) addr=${1#--addr=}; shift ;;
 	--lan) lan=1; shift ;;
+	--local) lan=0; shift ;;
 	--web-key) [ $# -ge 2 ] || die "--web-key needs a value"; web_key=$2; shift 2 ;;
 	--web-key=*) web_key=${1#--web-key=}; shift ;;
 	--use-proxy) use_proxy=1; shift ;;
@@ -140,7 +142,7 @@ fi
 if [ -z "${MAGPIE_ADDR:-}" ]; then
 	if [ "$lan" -eq 1 ]; then
 		export MAGPIE_ADDR="0.0.0.0:$gateway_port"
-	elif [ "$gateway_port" != 3425 ]; then
+	else
 		export MAGPIE_ADDR="127.0.0.1:$gateway_port"
 	fi
 fi
@@ -168,7 +170,7 @@ web_args=(web --addr "$page_addr")
 if [ "$open_page" -eq 0 ]; then web_args+=(--no-open); fi
 if [ ${#rest[@]} -gt 0 ]; then web_args+=("${rest[@]}"); fi
 
-say "web on http://$page_addr · gateway on ${MAGPIE_ADDR:-127.0.0.1:3425} · Ctrl-C to stop"
+say "web on http://$page_addr · gateway on ${MAGPIE_ADDR:-0.0.0.0:3425} · Ctrl-C to stop"
 if [ "$keep_log" -eq 1 ]; then
 	say "output also kept in $log_file"
 	set -o pipefail
